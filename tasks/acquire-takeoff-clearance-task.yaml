@@ -1,0 +1,78 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: acquire-takeoff-clearance-task
+  namespace: ci
+spec:
+  description: >-
+    This task waits until the PipelineRun that the task is executing in is the oldest currently running PipelineRun of the specified Pipelines.
+  params:
+    - name: pipelinerun
+      description: The name of the current PipelineRun
+      type: string
+    - name: pipelines
+      description: The name of the Pipeline(s) to wait for. Separate several pipelines with a space character.
+      type: string
+    - description: The total number of seconds to wait until failing the task
+      name: timeoutseconds
+      type: string
+    - description: The number of seconds to wait between attempts
+      name: sleepseconds
+      type: string
+  steps:
+    - name: run
+      image: localhost/tekton-builder-image-ubuntu-with-kubectl:latest
+      imagePullPolicy: Never
+      script: |
+        #!/usr/bin/env -S bash -e
+
+        PIPELINES="$(params.pipelines)"
+        THIS_PIPELINE_RUN="$(params.pipelinerun)"
+        TIMEOUT_NANOSECONDS=$(("$(params.timeoutseconds)" * 1000000000))
+        SLEEP_SECONDS="$(params.sleepseconds)"
+
+        echo "Waiting a maximum of $(jq -n $TIMEOUT_NANOSECONDS/1000000000) seconds until $THIS_PIPELINE_RUN is the oldest running pipeline run of pipeline(s): $PIPELINES"
+
+        for PIPELINE in $PIPELINES ; do
+          PIPELINE_FILTER="${PIPELINE_FILTER}.pipelineName=="'"'"$PIPELINE"'"'" or "
+        done
+        PIPELINE_FILTER=$(echo "$PIPELINE_FILTER" | sed 's/ or $//')
+
+        START_TIMESTAMP=$(date +%s%N)
+        while true; do
+            KUBECTLOUTPUTFILE=$(mktemp)
+            set +e
+            kubectl get pipelineruns.tekton.dev -o json > $KUBECTLOUTPUTFILE
+            RESULT=$?
+            set -e
+            KUBECTLOUTPUT=$(cat $KUBECTLOUTPUTFILE)
+            rm -f $KUBECTLOUTPUTFILE
+            if [[ $RESULT == 0 ]] ; then
+                OLDEST_PIPELINE_RUN=$(echo "$KUBECTLOUTPUT" \
+                  | jq '.items' \
+                  | jq '[.[] | {uid:.metadata.uid, pipelineName:.metadata.labels."tekton.dev/pipeline", pipelineRunName:.metadata.name, startTime:.status.startTime, completionTime:.status.completionTime}]' \
+                  | jq '[.[] | select(.completionTime==null)]' \
+                  | jq '[.[] | select('"${PIPELINE_FILTER}"')]' \
+                  | jq 'sort_by(.startTime, .uid)' \
+                  | jq -r '.[0] | .pipelineRunName')
+                if [[ $OLDEST_PIPELINE_RUN == $THIS_PIPELINE_RUN ]] ; then
+                    CURR_TIMESTAMP=$(date +%s%N)
+                    # echo "This pipeline run is the oldest running"
+                    break;
+                fi
+                # echo "Actual value $OLDEST_PIPELINE_RUN differs from expected value $THIS_PIPELINE_RUN"
+            else
+                echo "Failed to get pipeline runs, response: $KUBECTLOUTPUT"
+            fi
+
+            CURR_TIMESTAMP=$(date +%s%N)
+            if [ $(( CURR_TIMESTAMP - START_TIMESTAMP )) -gt $((TIMEOUT_NANOSECONDS)) ]; then
+                echo "Timeout, $OLDEST_PIPELINE_RUN is still running."
+                exit 1
+            fi
+            # echo "Sleeping $SLEEP_SECONDS seconds before trying again..."
+            sleep $SLEEP_SECONDS
+        done
+
+        echo "Success after $(jq -n "($CURR_TIMESTAMP - $START_TIMESTAMP)/1000000000") seconds"
+        exit 0

@@ -1,0 +1,42 @@
+apiVersion: tekton.dev/v1
+kind: Pipeline
+metadata:
+  name: my-pipeline
+  namespace: ci
+spec:
+  params:
+  workspaces:
+  tasks:
+    - name: echo-message-start
+      taskRef:
+        name: my-echo-task
+      params:
+        - name: message
+          value: 'Starting pipeline run'
+    - name: acquire-takeoff-clearance
+      runAfter: [echo-message-start]
+      taskRef:
+        name: acquire-takeoff-clearance-task
+      params:
+        - name: pipelinerun
+          value: $(context.pipelineRun.name)
+        - name: pipelines
+          value: $(context.pipeline.name)
+        - name: timeoutseconds
+          value: 1800
+        - name: sleepseconds
+          value: 5
+    - name: sleep
+      runAfter: [acquire-takeoff-clearance]
+      taskRef:
+        name: my-sleep-task
+      params:
+        - name: sleepseconds
+          value: 5
+    - name: echo-message-end
+      runAfter: [sleep]
+      taskRef:
+        name: my-echo-task
+      params:
+        - name: message
+          value: 'Pipeline run complete'

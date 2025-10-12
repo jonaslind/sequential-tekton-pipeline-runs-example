@@ -1,0 +1,10 @@
+apiVersion: tekton.dev/v1
+kind: PipelineRun
+metadata:
+  name: my-pipeline-run
+  namespace: ci
+spec:
+  pipelineRef:
+    name: my-pipeline
+  taskRunTemplate:
+    serviceAccountName: 'default'

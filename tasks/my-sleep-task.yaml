@@ -1,0 +1,17 @@
+apiVersion: tekton.dev/v1
+kind: Task
+metadata:
+  name: my-sleep-task
+  namespace: ci
+spec:
+  params:
+    - description: The number of seconds to wait
+      name: sleepseconds
+      type: string
+  steps:
+    - name: run
+      image: localhost/tekton-builder-image-ubuntu-with-kubectl:latest
+      imagePullPolicy: Never
+      script: |
+        echo "Sleeping $(params.sleepseconds) seconds"
+        sleep "$(params.sleepseconds)"
